@@ -511,6 +511,7 @@ function cid {
 
 
 function wait_for_dependency {
+  set -x
   local iid
   local dep="$1"
 
@@ -523,6 +524,7 @@ function wait_for_dependency {
   while ! healthy "$iid"; do
     sleep 0.5
   done
+  set +x
 }
 
 
