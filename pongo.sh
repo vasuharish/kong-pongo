@@ -12,6 +12,7 @@ function globals {
   SERVICE_NETWORK_NAME=${PROJECT_NAME}
   IMAGE_BASE_NAME=${PROJECT_NAME}-test
   KONG_TEST_PLUGIN_PATH=$(realpath .)
+  PONGO_WD=$KONG_TEST_PLUGIN_PATH
   if [[ -f "$KONG_TEST_PLUGIN_PATH/.pongo/pongorc" ]]; then
     PONGORC_FILE=".pongo/pongorc"
   elif [[ -f "$KONG_TEST_PLUGIN_PATH/.pongorc" ]]; then
@@ -91,6 +92,37 @@ function check_tools {
     exit 1
   fi
 }
+
+function check_docker {
+  # Are we running Pongo itself inside a container?
+  # $PONGO_WD will contain the path FOR THE HOST, that maps to
+  # $KONG_TEST_PLUGIN_PATH in the container that runs Pongo (=this code)
+  local PONGO_CONTAINER_ID
+  local HOST_PATH
+  if [[ -d "/pongo_wd" ]]; then
+    PONGO_CONTAINER_ID=$(grep "memory:/" < /proc/self/cgroup | sed 's|.*/||')
+    if [[ "$PONGO_CONTAINER_ID" == "" ]]; then
+      warn "'/pongo_wd' path is defined, but failed to get the container id"
+    else
+      #msg "Pongo container: $PONGO_CONTAINER_ID"
+      HOST_PATH=$(docker inspect $PONGO_CONTAINER_ID | grep ":/pongo_wd\"" | sed -e 's/^[ \t]*//' | sed s/\"//g | grep -o "^[^:]*")
+      #msg "Host working directory: $HOST_PATH"
+    fi
+    if [[ "$HOST_PATH" == "" ]]; then
+      warn "failed to read the container information, could not retrieve the"
+      warn "host path of the '/pongo_wd' directory."
+      warn "Make sure to run the container executing Pongo with:"
+      warn "    -v /var/run/docker.sock:/var/run/docker.sock"
+      warn "NOTE: make sure you understand the security implications!"
+      err "Failed to get container info."
+    fi
+    if [[ ! $KONG_TEST_PLUGIN_PATH == /pongo_wd ]] && [[ ! ${KONG_TEST_PLUGIN_PATH:0:10} == /pongo_wd/ ]]; then
+      err "When ran inside a container, Pongo MUST be run from within the '/pongo_wd' path"
+    fi
+    PONGO_WD=${KONG_TEST_PLUGIN_PATH/\/pongo_wd/${HOST_PATH}}
+  fi
+}
+
 
 function usage {
 cat << EOF
@@ -493,7 +525,7 @@ function compose {
   export NETWORK_NAME
   export SERVICE_NETWORK_NAME
   export KONG_TEST_IMAGE
-  export KONG_TEST_PLUGIN_PATH
+  export PONGO_WD
   docker-compose -p ${PROJECT_NAME} ${DOCKER_COMPOSE_FILES} "$@"
 }
 
@@ -684,6 +716,7 @@ function main {
     ;;
 
   run)
+    check_docker
     ensure_available
     get_version
 
@@ -727,12 +760,12 @@ function main {
     compose run --rm \
       -e KONG_LICENSE_DATA \
       -e KONG_TEST_DONT_CLEAN \
-      -e KONG_TEST_PLUGIN_PATH \
       kong \
       "/bin/sh" "-c" "bin/busted --helper=bin/busted_helper.lua ${busted_params[*]} ${busted_files[*]}"
     ;;
 
   shell)
+    check_docker
     get_plugin_names
     get_version
     docker inspect --type=image $KONG_TEST_IMAGE &> /dev/null
@@ -771,6 +804,7 @@ function main {
     ;;
 
   lint)
+    check_docker
     get_plugin_names
     get_version
     docker inspect --type=image $KONG_TEST_IMAGE &> /dev/null
@@ -790,6 +824,7 @@ function main {
     ;;
 
   pack)
+    check_docker
     get_plugin_names
     get_version
     docker inspect --type=image $KONG_TEST_IMAGE &> /dev/null
